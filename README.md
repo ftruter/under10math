@@ -5,6 +5,17 @@ A fun game for students to revise and practice arithmetic.
 
 It is a portable solution that will work on 🐧 Linux, ❖ Windows,  Mac, or 🍓 Raspberry Pi
 
+Site link: [ftruter.github.io/under10math](https://ftruter.github.io/under10math/)
+
+## PWA - Progressive Web App
+
+This site has a [manifest](./manifest.json) which tells the browser that it can be saved as a self-contained web app for offline use.
+
+Look in your browser for the option to "Save to Desktop" or "Add to Dock" or "Add to Home Screen" and pretty soon you will have a new app on your system. Lightweight, responsive and offline.
+
+
+# Running locally
+
 ## Requirements
 
 You will need Python 3.13+ with the following packages:-
@@ -34,7 +45,7 @@ NB. If you're on a work or school computer, use `--user` instead of `--break-sys
 
 ### SSL Certificates
 
-You will need some of these as the ones in the repo are probably expired by the time you clone them. There are plenty of guides on the web on this, but this is my recipe:
+You will need to create some certificates. There are plenty of guides on the web on this, but this is my recipe:
 
     openssl req -x509 \
       -newkey rsa:4096 \
@@ -63,11 +74,6 @@ On other platforms:-
 
 Open a browser and navigate to [https://localhost.truter.world:4443](https://localhost.truter.world:4443) but be sure to use your own domain name if you created your self-signed SSL certificate with a different "CN" part than shown [above](#ssl-certificates). The important bits are the protocol (https) and the port (4443). You can change the port number inside the [host](./host) script.
 
-## PWA - Progressive Web App
-
-This site has a [manifest](./manifest.json) which tells the browser that it can be saved as a self-contained web app for offline use.
-
-Look in your browser for the option to "Save to Desktop" or "Add to Dock" or "Add to Home Screen" and pretty soon you will have a new app on your system. Lightweight, responsive and offline.
 
 # Contributing
 
