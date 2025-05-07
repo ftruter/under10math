@@ -1,0 +1,37 @@
+{
+    "name": "Math Revision for Under Tens",
+    "background_color": "#ffffff",
+    "description": "A math revision game for kids under 10 with addition, subtraction, multiplication, and division.",
+    "display": "standalone",
+    "icons": [
+        {
+            "src": "TruDojo-calc-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "TruDojo-calc-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ],
+    "id": "/site.html",
+    "orientation": "portrait",
+    "screenshots": [
+        {
+            "src": "screenshot-tall.png",
+            "sizes": "1200x1919",
+            "type": "image/png",
+            "form_factor": "narrow"
+        },
+        {
+            "src": "screenshot-wide.png",
+            "sizes": "1920x1200",
+            "type": "image/png",
+            "form_factor": "wide"
+        }
+    ],
+    "short_name": "Math Revision",
+    "start_url": "/site.html",
+    "theme_color": "#000000"
+}

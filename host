@@ -1,0 +1,379 @@
+#! /usr/bin/env python3.13
+
+import asyncio
+import brotli
+import gzip
+import datetime
+import hashlib
+import logging
+import mimetypes
+import os
+import psutil
+import ssl
+import subprocess
+from hypercorn.config import Config
+from hypercorn.asyncio import serve
+from starlette.applications import Starlette
+from starlette.responses import Response, FileResponse
+from starlette.routing import Route
+from pathlib import Path
+
+HOST = 'localhost.truter.world'
+PORT = 4443
+SSL_PATH = 'SSL'
+CERT = os.path.join( SSL_PATH, 'cert.pem' )
+KEY = os.path.join( SSL_PATH, 'privkey.pem' )
+
+def check_certificates():
+    if not os.path.isfile( CERT ):
+        print( f'Certificate not found: {CERT}' )
+        print( 'Please see README.md for instructions.' )
+        exit( 1 )
+
+    if not os.path.isfile( KEY ):
+        print( f'Private key not found: {KEY}' )
+        print( 'Please see README.md for instructions.' )
+        exit( 1 )
+
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+    except ImportError:
+        print( "Can't check what's in the certificates. Please install 'cryptography' package." )
+        return
+    
+    try:
+        # Load and parse certificate
+        with open(CERT, 'rb') as f:
+            cert_data = f.read()
+
+        cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+
+        # Get CN from subject
+        cn = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value
+
+        # Get SANs (if any)
+        san = set()
+        try:
+            ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            san = set(ext.value.get_values_for_type(x509.DNSName))
+        except x509.ExtensionNotFound:
+            pass
+
+        # Print domains
+        print(f'Now open a browser at https://{cn}:{PORT}')
+        san.discard(cn)  # Remove CN from SANs if present
+
+        for domain in sorted(san):
+            print(f' or https://{domain}:{PORT}')
+
+    except Exception as e:
+        print(f'Error reading certificate: {e}')
+
+
+# Alas QUIC push is not properly implemented in ANY browser yet (May 2025) so leave this commented out for now.
+Push_Rules = dict(
+    # {
+    # 'site.html': [ 'site.css', 'site.js' , 'TruDojo-calc.svg' ],
+    # 'manifest.json': [ 'TruDojo-calc-192.png', 'TruDojo-calc-512.png', 'screenshot-tall.png', 'screenshot-wide.png' ],
+    # }
+)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def find_sass_process():
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        if proc.info['name'] == 'sass':
+            if '-w' in proc.info['cmdline']:
+                return proc
+    return None
+
+if find_sass_process():
+    print(f'Sass process already running with PID: {find_sass_process().info['pid']}')
+else:
+    # Start the sass process independently of this script
+    # This assumes you have a script called watch-sass in the same directory
+    # that starts the sass process with the -w argument
+    sass_process = subprocess.Popen(['./watch-sass'], shell=True)
+    print(f'Started sass process with PID: {sass_process.pid}')
+
+class RequestHandler:
+    def __init__(self, directory):
+        self.directory = Path(directory).resolve()
+        mimetypes.init()
+
+    def compress_files(self):
+        '''Pre-compress non-image files with Brotli and gzip.'''
+        non_image_extensions = {'.html', '.css', '.js', '.txt', '.xml', '.json'}
+        for file_path in self.directory.rglob('*'):
+            if file_path.is_file() and file_path.suffix.lower() in non_image_extensions:
+                # Compute file hash to check if compression is needed
+                with open(file_path, 'rb') as f:
+                    file_hash = hashlib.sha256(f.read()).hexdigest()
+                
+                br_path = file_path.with_suffix(file_path.suffix + '.br')
+                gz_path = file_path.with_suffix(file_path.suffix + '.gz')
+                
+                # Check if compressed files exist and are up-to-date
+                recompress = False
+                if br_path.exists():
+                    with open(br_path, 'rb') as f:
+                        br_hash = br_path.stat().st_mtime  # Use mtime as proxy for version
+                        if br_hash < file_path.stat().st_mtime:
+                            recompress = True
+                else:
+                    recompress = True
+                
+                if gz_path.exists():
+                    with open(gz_path, 'rb') as f:
+                        gz_hash = gz_path.stat().st_mtime
+                        if gz_hash < file_path.stat().st_mtime:
+                            recompress = True
+                else:
+                    recompress = True
+                
+                if recompress:
+                    logger.info(f'Compressing {file_path}')
+                    with open(file_path, 'rb') as f:
+                        content = f.read()
+                    
+                    # Brotli compression (level 11 for max compression)
+                    br_content = brotli.compress(content, quality=11)
+                    with open(br_path, 'wb') as f:
+                        f.write(br_content)
+                    
+                    # Gzip compression (level 9 for max compression)
+                    with gzip.open(gz_path, 'wb', compresslevel=9) as f:
+                        f.write(content)
+                    
+                    logger.info(f'Generated {br_path} and {gz_path}')
+
+    def parse_range(self, range_header, file_size):
+        '''Parse the Range header and return (start, end) or None if invalid.'''
+        if not range_header.startswith('bytes='):
+            return None
+        try:
+            range_spec = range_header[6:].split('-')
+            start = int(range_spec[0]) if range_spec[0] else 0
+            end = int(range_spec[1]) if range_spec[1] else file_size - 1
+            if start < 0 or end >= file_size or start > end:
+                return None
+            return start, end
+        except (ValueError, IndexError):
+            return None
+
+    async def push_resources(self, scope, path):
+        '''Push site.css and site.js for HTTP/2 and HTTP/3 when index.html is requested.'''
+        if scope.get('http_version') not in ('2.0', '3'): return
+        resources = Push_Rules.get(path.name)
+        if not resources: return
+
+        for push_path in resources:
+            content_type, _ = mimetypes.guess_type(push_path)
+            file_path = self.directory / push_path.lstrip('/')
+            if file_path.is_file():
+                logger.info(f'Pushing resource: {push_path}')
+                headers = [
+                    (b':method', b'GET'),
+                    (b':scheme', scope.get('scheme', 'https').encode()),
+                    (b':authority', scope.get('server', ['', ''])[0].encode()),
+                    (b':path', push_path.encode()),
+                    (b'content-type', content_type.encode()),
+                    (b'cache-control', b'public, max-age=3600')
+                ]
+                try:
+                    await scope['asgi']['send']({
+                        'type': 'http.response.push',
+                        'path': push_path,
+                        'headers': headers
+                    })
+                    # Read and send the pushed file content
+                    with open(file_path, 'rb') as f:
+                        content = f.read()
+                    await scope['asgi']['send']({
+                        'type': 'http.response.start',
+                        'status': 200,
+                        'headers': [
+                            (b'content-type', content_type.encode()),
+                            (b'content-length', str(len(content)).encode()),
+                            (b'cache-control', b'public, max-age=3600, ')
+                        ]
+                    })
+                    await scope['asgi']['send']({
+                        'type': 'http.response.body',
+                        'body': content,
+                        'more_body': False
+                    })
+                except Exception as e:
+                    logger.error(f'Failed to push {push_path}: {e}')
+
+    async def serve_file(self, scope, path, request_headers):
+        '''Serve a file from the directory, handling byte-range requests.'''
+        try:
+            file_path = self.directory / path.lstrip('/')
+            if file_path.is_dir():
+                for name in 'index.html', 'index.htm', 'site.html':
+                    index_file = file_path / name
+                    if index_file.is_file():
+                        logger.info(f'Serving index file: {index_file}')
+                        file_path = index_file
+                        break
+                    
+            if not file_path.is_file():
+                logger.error(f'File not found: {file_path}')
+                return Response('Not Found', status_code=404, media_type='text/plain')
+            
+            await self.push_resources(scope, file_path)
+
+            file_size = file_path.stat().st_size
+            content_type, _ = mimetypes.guess_type(file_path) 
+            if not content_type: content_type ='application/octet-stream'
+
+            last_modified = datetime.datetime.fromtimestamp(file_path.stat().st_mtime, datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
+            
+            stat = file_path.stat()
+            response_headers = {
+                'Content-Type': content_type,
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=604800, stale-while-revalidate=86400',
+                'Content-Length': str(file_size),
+                'Last-Modified': last_modified,
+                'ETag': str(stat.st_ino),
+            }
+
+            range_header = request_headers.get('range')
+            if range_header:
+                range_info = self.parse_range(range_header, file_size)
+                if range_info is None:
+                    request_headers = {'Content-Range': f'bytes */{file_size}'}
+                    logger.warning(f'Invalid range request: {range_header}')
+                    return Response('Range Not Satisfiable', status_code=416, media_type='text/plain', headers=request_headers)
+                
+                start, end = range_info
+                content_length = end - start + 1
+                with open(file_path, 'rb') as f:
+                    f.seek(start)
+                    content = f.read(content_length)
+                
+                response_headers.update({
+                    'Content-Range': f'bytes {start}-{end}/{file_size}',
+                    'Content-Length': str(content_length),
+                })
+                logger.info(f'Serving byte range {start}-{end} for {file_path}')
+                return Response(content, status_code=206, headers=response_headers)
+            
+            # Check Accept-Encoding for compression support
+            accept_encoding = set([i.strip() for i in request_headers.get('accept-encoding', '').lower().split(',')])
+            if content_type.startswith('image/'):
+                if content_type != 'image/svg+xml':
+                    accept_encoding = set() # pretend we don't support image compression
+
+            file_folder, file_name, file_suffix = file_path.parent, file_path.name, file_path.suffix 
+            br_path = file_folder / f'.{file_name}.br' # files with dot prefix are not sent to GitHub
+            gz_path = file_folder / f'.{file_name}.gz' # files with dot prefix are not sent to GitHub
+
+            if 'br' in accept_encoding \
+            and br_path.is_file() \
+            and br_path.stat().st_mtime >= file_path.stat().st_mtime:
+
+                with open(br_path, 'rb') as f:
+                    content = f.read()
+                response_headers.update({
+                    'Content-Length': str(len(content)),
+                    'Content-Encoding': 'br',
+                })
+                logger.info(f'Serving Brotli-compressed {file_path}')
+                return Response(content, status_code=200, headers=response_headers)
+
+            if 'gzip' in accept_encoding \
+            and gz_path.is_file() \
+            and gz_path.stat().st_mtime >= file_path.stat().st_mtime:
+                
+                with open(gz_path, 'rb') as f:
+                    content = f.read()
+                response_headers.update({
+                    'Content-Encoding': 'gzip',
+                    'Content-Length': str(len(content)),
+                })
+                logger.info(f'Serving gzip-compressed {file_path}')
+                return Response(content, status_code=200, headers=response_headers)
+            
+            if 'br' in accept_encoding:
+                # this is the first user to ask for Brotli compression
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                content = brotli.compress(content, quality=11)
+                with open(br_path, 'wb') as f:
+                    f.write(content)
+                response_headers.update({
+                    'Content-Length': str(len(content)),
+                    'Content-Encoding': 'br',
+                })
+                logger.info(f'Serving NEW Brotli-compressed {file_path}')
+                return Response(content, status_code=200, headers=response_headers)
+            
+            if 'gzip' in accept_encoding:
+                # this is the first user to ask for gzip compression
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                content = gzip.compress(content, compresslevel=9)
+                with open(gz_path, 'wb') as f:
+                    f.write(content)
+                response_headers.update({
+                    'Content-Encoding': 'gzip',
+                    'Content-Length': str(len(content)),
+                })
+                logger.info(f'Serving NEW gzip-compressed {file_path}')
+                return Response(content, status_code=200, headers=response_headers)
+            
+            logger.info(f'Serving full file: {file_path}')
+            return FileResponse(file_path, media_type=content_type, headers=response_headers)
+        
+        except Exception as e:
+            logger.error(f'Error serving file {file_path}: {e}')
+            return Response(str(e), status_code=500, media_type='text/plain')
+
+async def serve_file(request):
+    handler = RequestHandler(directory='.')
+    return await handler.serve_file(
+        request.scope, 
+        request.path_params['path'], 
+        request.headers)
+
+app = Starlette(routes=[
+    Route('/{path:path}', serve_file, methods=['GET'])
+])
+
+if __name__ == '__main__':
+    print('\n\nserver for under10math starting...\n\n')
+    
+    check_certificates()
+
+    config = Config()
+    config.bind = [f'0.0.0.0:{PORT}']
+    config.quic_bind = [f'0.0.0.0:{PORT}']
+    config.certfile = CERT
+    config.keyfile = KEY
+    config.alpn_protocols = ['h3', 'h2', 'http/1.1']
+    config.accesslog = '-'  # Log to stdout
+    config.errorlog = '-'   # Log errors to stdout
+
+    # Run the server
+    async def run_server():
+        try:
+            await serve(app, config=config)
+        except Exception as e:
+            logger.error(f'Server failed: {e}')
+            raise
+
+    # Use asyncio event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(run_server())
+    except KeyboardInterrupt:
+        logger.info('Shutting down server')
+    finally:
+        loop.close()

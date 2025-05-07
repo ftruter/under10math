@@ -1,0 +1,79 @@
+/*!
+    Style for the quiz application are in `site.sass`
+    Copyright (c) 2025 Truter Dojo Limited
+    This file is licensed under the MIT License.
+    See the LICENSE file in the project root for more information. */
+body 
+  background-color: black
+  background-image: url(TruDojo-calc.svg)
+  color: white
+  font-family: Arial, sans-serif
+  font-size: 2vmin
+  margin: 1em
+  text-align: center
+*
+  transition: all 0.25s ease-in-out
+.summary div
+  margin: 10px
+.green 
+  background-color: hsla(120, 50%, 50%, 0.3)
+.yellow
+  background-color: hsla(60, 50%, 50%, 0.3)
+.red
+  background-color: hsla(0, 50%, 50%, 0.3)
+table
+  border-top: 1px solid #ccc
+  border-left: 1px solid #ccc
+  border-collapse: collapse
+  margin: 0 auto
+td
+  vertical-align: top
+  text-align: center
+  border-right: 1px solid #ccc
+  border-bottom: 1px solid #ccc
+  padding: 1vmin
+  height: 1em;
+button
+  background-color: lightblue
+  border-radius: 1ex
+  border: none
+  box-shadow: 0.5ex 0.5ex 0.5ex rgba(0, 0, 0, 0.2)
+  font-size: 5vmin
+  padding: 0.5ex 1ex
+  margin: 0.5ex
+  &:hover
+    background-color: blue
+    color: white
+#game
+  position: absolute
+  inset: 0
+  display: flex
+  flex-direction: column
+  gap: 1ex
+  align-content: center
+  align-items: stretch
+  justify-content: stretch
+  padding: 2em
+  .question
+    vertical-align: middle
+    padding: 1ex 2ex
+    background: hsla(120, 100%, 20%, 0.5)
+    border-radius: 1ex
+  .options
+    flex: 2
+    display: grid
+    gap: 1ex
+    grid-template-columns: 1fr 1fr
+
+  .question-number
+    position: absolute
+    bottom: 0.5ex
+    left: 0.5ex
+  .timer
+    position: absolute
+    bottom: 0.5ex
+    right: 0.5ex
+  .score
+    position: absolute
+    top: 0.5ex
+    right: 0.5ex

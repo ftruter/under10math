@@ -1,0 +1,87 @@
+<html>
+
+<head>
+    <title>Math Revision for Under Tens</title>
+    <meta charset="UTF-8">
+    <link rel="preload" href="TruDojo-calc.svg" as="image" crossorigin type="image/svg+xml" />
+    <link rel="apple-touch-icon" sizes="180x180" href="TruDojo-calc-180.png?text=Math+Revision">
+    <link rel="apple-touch-icon" sizes="192x192" href="TruDojo-calc-192.png?text=Math+Revision">
+    <link rel="apple-touch-icon" sizes="512x512" href="TruDojo-calc-512.png?text=Math+Revision">
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="site.css">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Math Revision">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#000000">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script defer src="site.js"></script>
+</head>
+
+<body>
+    <div id="loading">
+        Please enable javascript to use this app.
+    </div>
+    <div id="intro" style="display: none">
+        <h1>Math Revision for Under Tens</h1>
+        <button id="start" onclick="start()">Start</button>
+        <ul>
+            <li>You will have 15 questions to answer and 30 seconds allowed for each one.</li>
+            <li>If you answer correctly within one second you will gain 30 points.</li>
+            <li>If you take five seconds to answer you will get only 25 points and so on.</li>
+            <li>If you answer incorrectly you get 0 points and move on to the next question.</li>
+            <li>For each question you will be asked to add, subtract, multiply (times) or divide.</li>
+            <li>You will see four options and one of them will be the correct answer.</li>
+            <li>⚠️ Don't be fooled though, as some of the answers will be misleading. </li>
+            <li>For example, when asked <b>What is 5 × 4?</b>" you may see these options:</li>
+        </ul>
+        <table>
+            <colgroup>
+                <col width="200" />
+                <col width="200" />
+            </colgroup>
+            <tr>
+                <td><button onclick="reveal('#A')">9</button></td>
+                <td><button onclick="reveal('#B')">1</button></td>
+            </tr>
+            <tr>
+                <td><span id="A" style="display: none">❌ wrong because it is<br />5 + 4, not 5 × 4</span></td>
+                <td><span id="B" style="display: none">❌ wrong because it is<br />5 — 4, not 5 × 4</span></td>
+            </tr>
+            <tr>
+                <td><button onclick="reveal('#C')">20</button></td>
+                <td><button onclick="reveal('#D')">45</button></td>
+            </tr>
+            <tr>
+                <td><span id="C" style="display: none">✅ correct because it is<br />5 × 4</span></td>
+                <td><span id="D" style="display: none">❌ wrong because it is<br />5 × 9, not 5 × 4</span></td>
+            </tr>
+        </table>
+        <p>Click the Start button above to start the game.</p>
+        <p>Good luck!</p>
+    </div>
+    <div id="game" style="display: none">
+        <div>Math Revision for Under Tens</div>
+        <div class="question-number"></div>
+        <h2 class="question"></h2>
+        <div class="timer"></div>
+        <div class="score"></div>
+        <div class="options">
+            <button class="A">A</button>
+            <button class="B">B</button>
+            <button class="C">C</button>
+            <button class="D">D</button>
+        </div>
+    </div>
+    <div id="summary" style="display: none">
+        <h1>Math Revision for Under Tens</h1>
+        <h2 id="inspire">Summary</h2>
+        <div id="score"></div>
+        <table id="breakdown"></table>
+        <button onclick="share()">Share &amp; Challenge</button>
+        <button onclick="replay()">Try again</button>
+        <button onclick="newGame()">New game</button>
+    </div>
+</body>
+
+</html>
